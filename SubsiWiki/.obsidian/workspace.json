@@ -1,0 +1,242 @@
+{
+  "main": {
+    "id": "534c89bec12dbcbe",
+    "type": "split",
+    "children": [
+      {
+        "id": "e1eefc17861285cb",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "72b0102d31263aee",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Welcome.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Welcome"
+            }
+          }
+        ]
+      },
+      {
+        "id": "9ae0e85c0d7fde81",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "069d55a0ebd185d6",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Clippings/Funding.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Funding"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "1f5493ba9b86a365",
+    "type": "split",
+    "children": [
+      {
+        "id": "e5c1246576721e2c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "de8dccea90d135c5",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "8f8bb1053d7c8695",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "3d6ad07c98961ed0",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "9f6b2011f9f69e73",
+    "type": "split",
+    "children": [
+      {
+        "id": "a0a8d74955533f3d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9357b9d2a4d9eb51",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Clippings/Funding.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for Funding"
+            }
+          },
+          {
+            "id": "87ed6ad3c93b9f18",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Clippings/Funding.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from Funding"
+            }
+          },
+          {
+            "id": "75efd0fdd71ab144",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "b6555e33ab9c3930",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "8b59ceb20d61dc8c",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Clippings/Funding.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of Funding"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "de8dccea90d135c5",
+  "lastOpenFiles": [
+    "Wiki/Entities/HaDEA.md",
+    "Wiki/Entities/CINEA.md",
+    "Wiki/Entities/EISMEA.md",
+    "Wiki/Entities/European Commission.md",
+    "Wiki/Entities/Funding & Tenders Portal.md",
+    "Wiki/Programs/Common Agricultural Policy.md",
+    "Wiki/Programs/Connecting Europe Facility.md",
+    "Wiki/Programs/Research Fund for Coal and Steel.md",
+    "Wiki/Programs/European Structural and Investment Funds.md",
+    "Wiki/Programs/European Regional Development Fund.md",
+    "Wiki/Programs/LIFE Programme.md",
+    "Wiki/Programs/Cohesion Fund.md",
+    "Wiki/Programs/EU4Health.md",
+    "Wiki/Programs/Horizon Europe.md",
+    "Wiki/Guides/How to Apply for EU Funding.md",
+    "Wiki/Concepts/Research and Innovation Funding.md",
+    "Wiki/Concepts/SME Funding.md",
+    "Wiki/Concepts/EU Funding Management Modes.md",
+    "Wiki/Concepts/EU Funding Types.md",
+    "Wiki/Concepts/EU Funding Overview.md",
+    "Wiki/Sources/Source - The application process.md",
+    "Wiki/Sources/Source - Funding opportunities for small businesses.md",
+    "Wiki/Sources/Source - Funding programmes and open calls.md",
+    "Wiki/Sources/Source - Funding opportunities.md",
+    "Wiki/Sources/Source - Funding.md",
+    "Wiki/Sources/Source - EU Funding and Tenders Portal.md",
+    "Wiki/Sources",
+    "Wiki/Programs",
+    "Wiki/Guides",
+    "Wiki/Entities",
+    "Wiki/Concepts",
+    "Wiki",
+    "Clippings"
+  ]
+}
