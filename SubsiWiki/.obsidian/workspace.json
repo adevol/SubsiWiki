@@ -31,14 +31,13 @@
             "id": "069d55a0ebd185d6",
             "type": "leaf",
             "state": {
-              "type": "markdown",
+              "type": "bases",
               "state": {
-                "file": "Clippings/Funding.md",
-                "mode": "source",
-                "source": false
+                "file": "Untitled.base",
+                "viewName": "Table"
               },
-              "icon": "lucide-file",
-              "title": "Funding"
+              "icon": "lucide-table",
+              "title": "Untitled"
             }
           }
         ]
@@ -114,7 +113,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "Clippings/Funding.md",
+                "file": "Untitled.base",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -124,7 +123,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for Funding"
+              "title": "Backlinks for Untitled"
             }
           },
           {
@@ -133,12 +132,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "Clippings/Funding.md",
+                "file": "Untitled.base",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from Funding"
+              "title": "Outgoing links from Untitled"
             }
           },
           {
@@ -176,13 +175,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Clippings/Funding.md",
+                "file": "Untitled.base",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of Funding"
+              "title": "Outline of Untitled"
             }
           }
         ]
@@ -203,8 +202,11 @@
       "bases:Create new base": false
     }
   },
-  "active": "de8dccea90d135c5",
+  "active": "069d55a0ebd185d6",
   "lastOpenFiles": [
+    "AGENTS.md",
+    "Untitled.base",
+    "Clippings/Funding.md",
     "Wiki/Entities/HaDEA.md",
     "Wiki/Entities/CINEA.md",
     "Wiki/Entities/EISMEA.md",
@@ -229,8 +231,6 @@
     "Wiki/Sources/Source - Funding opportunities for small businesses.md",
     "Wiki/Sources/Source - Funding programmes and open calls.md",
     "Wiki/Sources/Source - Funding opportunities.md",
-    "Wiki/Sources/Source - Funding.md",
-    "Wiki/Sources/Source - EU Funding and Tenders Portal.md",
     "Wiki/Sources",
     "Wiki/Programs",
     "Wiki/Guides",
