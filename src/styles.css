@@ -139,6 +139,19 @@ button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.
 button:disabled { opacity: 0.65; cursor: wait; }
 
 .status { color: var(--muted); font-size: 0.92rem; }
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #eddfff;
+  font-weight: 800;
+  font-size: 0.94rem;
+}
+.toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--pink);
+}
 
 .chips {
   display: flex;
@@ -164,7 +177,7 @@ button:disabled { opacity: 0.65; cursor: wait; }
   color: #ffd6e2;
 }
 
-.answer-card, .sources-card {
+.answer-card, .sources-card, .trace-card {
   margin-top: 22px;
   padding: clamp(18px, 3vw, 28px);
   border-radius: 28px;
@@ -187,6 +200,34 @@ h2 { margin: 0 0 14px; color: white; letter-spacing: -0.03em; }
   color: var(--good);
   font-weight: 900;
   text-decoration: none;
+}
+
+.trace-list {
+  display: grid;
+  gap: 10px;
+}
+.trace-item {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(0,0,0,0.16);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.trace-item strong {
+  color: var(--good);
+  text-transform: capitalize;
+}
+.trace-item span {
+  color: #eadfff;
+  overflow-wrap: anywhere;
+}
+.trace-item em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 800;
 }
 
 .sources-list { display: grid; gap: 14px; }
@@ -222,5 +263,6 @@ blockquote {
 @media (max-width: 640px) {
   .app { width: min(100% - 20px, 1120px); padding: 28px 0; }
   .panel { border-radius: 24px; }
+  .trace-item { grid-template-columns: 1fr; }
   .source-item { grid-template-columns: 1fr; }
 }

@@ -31,13 +31,14 @@
             "id": "069d55a0ebd185d6",
             "type": "leaf",
             "state": {
-              "type": "bases",
+              "type": "markdown",
               "state": {
-                "file": "Untitled.base",
-                "viewName": "Table"
+                "file": "Clippings/Andrej Karpathy’s LLM Wiki Create your own knowledge base.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "lucide-table",
-              "title": "Untitled"
+              "icon": "lucide-file",
+              "title": "Andrej Karpathy’s LLM Wiki Create your own knowledge base"
             }
           }
         ]
@@ -204,8 +205,9 @@
   },
   "active": "069d55a0ebd185d6",
   "lastOpenFiles": [
-    "AGENTS.md",
     "Untitled.base",
+    "Clippings/Andrej Karpathy’s LLM Wiki Create your own knowledge base.md",
+    "AGENTS.md",
     "Clippings/Funding.md",
     "Wiki/Entities/HaDEA.md",
     "Wiki/Entities/CINEA.md",
@@ -229,8 +231,6 @@
     "Wiki/Concepts/EU Funding Overview.md",
     "Wiki/Sources/Source - The application process.md",
     "Wiki/Sources/Source - Funding opportunities for small businesses.md",
-    "Wiki/Sources/Source - Funding programmes and open calls.md",
-    "Wiki/Sources/Source - Funding opportunities.md",
     "Wiki/Sources",
     "Wiki/Programs",
     "Wiki/Guides",

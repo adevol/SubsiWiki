@@ -22,6 +22,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [usedLLM, setUsedLLM] = useState(null);
+  const [usedAgent, setUsedAgent] = useState(null);
+  const [allowWeb, setAllowWeb] = useState(false);
+  const [trace, setTrace] = useState([]);
 
   const suggestions = useMemo(() => [
     'What types of funding could a small manufacturer qualify for?',
@@ -33,18 +36,24 @@ function App() {
   async function submit(e) {
     e?.preventDefault();
     if (!question.trim()) return;
-    setLoading(true); setError(''); setAnswer(''); setSources([]);
+    setLoading(true);
+    setError('');
+    setAnswer('');
+    setSources([]);
+    setTrace([]);
     try {
       const res = await fetch(`${API}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, agent: true, allowWeb })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Request failed');
       setAnswer(json.answer);
       setSources(json.sources || []);
       setUsedLLM(json.usedLLM);
+      setUsedAgent(json.usedAgent);
+      setTrace(json.trace || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -59,7 +68,7 @@ function App() {
     <header className="hero">
       <div className="eyebrow">SubsiWiki AI</div>
       <h1>Ask the EU funding knowledge base.</h1>
-      <p>Get practical answers from your Obsidian vault with clickable citations back to source pages and official URLs.</p>
+      <p>Get practical answers from your Obsidian vault with clickable citations, and let the agent inspect live pages when you approve it.</p>
     </header>
 
     <main className="panel">
@@ -67,8 +76,12 @@ function App() {
         <label htmlFor="question">Your question</label>
         <textarea id="question" value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask about grants, SME funding, green innovation, application steps..." />
         <div className="actions">
-          <button disabled={loading}>{loading ? 'Asking…' : 'Ask SubsiWiki'}</button>
-          <span className="status">{usedLLM === false ? 'Retrieval-only: add OPENROUTER_API_KEY for generated answers' : usedLLM === true ? 'LLM answer generated from retrieved vault excerpts' : 'Cited answers from your vault'}</span>
+          <button disabled={loading}>{loading ? 'Asking...' : 'Ask SubsiWiki'}</button>
+          <label className="toggle">
+            <input type="checkbox" checked={allowWeb} onChange={e => setAllowWeb(e.target.checked)} />
+            <span>Allow live web</span>
+          </label>
+          <span className="status">{usedLLM === false ? 'Retrieval-only: add OPENROUTER_API_KEY for generated answers' : usedAgent ? 'Agent answer from vault and approved tools' : usedLLM === true ? 'LLM answer generated from retrieved vault excerpts' : 'Cited answers from your vault'}</span>
         </div>
       </form>
 
@@ -83,6 +96,17 @@ function App() {
         <div className="answer-text">{linkifyCitations(answer, sources)}</div>
       </section>}
 
+      {!!trace.length && <section className="trace-card">
+        <h2>Research trace</h2>
+        <div className="trace-list">
+          {trace.map((step, idx) => <div key={`${step.tool}-${idx}`} className="trace-item">
+            <strong>{step.tool.replaceAll('_', ' ')}</strong>
+            <span>{step.input}</span>
+            {!!step.sources?.length && <em>{step.sources.map(id => `[${id}]`).join(' ')}</em>}
+          </div>)}
+        </div>
+      </section>}
+
       {!!sources.length && <section id="sources" className="sources-card">
         <h2>Cited sources</h2>
         <div className="sources-list">
@@ -90,9 +114,9 @@ function App() {
             <div className="source-num">[{source.id}]</div>
             <div>
               <h3>{source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}</h3>
-              <p className="source-meta">{source.kind} · {source.url || source.path}</p>
+              <p className="source-meta">{source.sourceType || source.kind} · {source.url || source.path}</p>
               {!!source.relatedUrls?.length && <p className="related-links">Official links: {source.relatedUrls.map((url, i) => <React.Fragment key={url}><a href={url} target="_blank" rel="noreferrer">{new URL(url).hostname}</a>{i < source.relatedUrls.length - 1 ? ', ' : ''}</React.Fragment>)}</p>}
-              {source.excerpts?.[0] && <blockquote>{source.excerpts[0]}…</blockquote>}
+              {source.excerpts?.[0] && <blockquote>{source.excerpts[0]}...</blockquote>}
             </div>
           </article>)}
         </div>

@@ -1,13 +1,18 @@
 import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
+import dns from 'node:dns/promises';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 
 const app = express();
 const PORT = process.env.PORT || 8787;
 const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 const VAULT_DIR = path.resolve(process.env.VAULT_DIR || 'SubsiWiki');
+const MAX_AGENT_STEPS = Number(process.env.AGENT_MAX_STEPS || 8);
+const MAX_WEB_FETCHES = Number(process.env.AGENT_MAX_WEB_FETCHES || 15);
+const MAX_WEB_SEARCHES = Number(process.env.AGENT_MAX_WEB_SEARCHES || 5);
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -156,7 +161,7 @@ function uniqueSources(chunks) {
   for (const c of chunks) {
     const key = c.url || c.relPath;
     if (!map.has(key)) {
-      map.set(key, { id: map.size + 1, title: c.title, url: c.url, relatedUrls: c.relatedUrls || [], path: c.relPath, kind: c.kind, excerpts: [] });
+      map.set(key, { id: map.size + 1, title: c.title, url: c.url, relatedUrls: c.relatedUrls || [], path: c.relPath, kind: c.kind, sourceType: c.sourceType || 'vault', excerpts: [] });
     }
     map.get(key).excerpts.push(c.text.slice(0, 320));
   }
@@ -191,6 +196,302 @@ async function askOpenRouter(question, chunks, sources) {
   return json.choices?.[0]?.message?.content?.trim() || 'No answer returned.';
 }
 
+function normalizeToolCall(tc) {
+  const fn = tc.function || {};
+  return {
+    id: tc.id,
+    name: fn.name,
+    args: JSON.parse(fn.arguments || '{}')
+  };
+}
+
+function toolSchema(name, description, properties, required = Object.keys(properties)) {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description,
+      parameters: { type: 'object', properties, required }
+    }
+  };
+}
+
+const AGENT_TOOLS = [
+  toolSchema('search_vault', 'Search the Obsidian vault for relevant stored knowledge. Use this first.', {
+    query: { type: 'string', description: 'The search query.' }
+  }),
+  toolSchema('fetch_url', 'Fetch a specific public URL and extract readable text as live web evidence.', {
+    url: { type: 'string', description: 'The public http(s) URL to fetch.' },
+    reason: { type: 'string', description: 'Why this URL is needed for the answer.' }
+  }),
+  toolSchema('search_web', 'Search the live web for candidate URLs. Prefer official sources and fetch useful results before citing facts.', {
+    query: { type: 'string', description: 'The web search query.' }
+  })
+];
+
+function isPrivateIp(ip) {
+  if (net.isIP(ip) === 4) {
+    const parts = ip.split('.').map(Number);
+    return parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      parts[0] === 0;
+  }
+  if (net.isIP(ip) === 6) {
+    const lower = ip.toLowerCase();
+    return lower === '::1' || lower.startsWith('fc') || lower.startsWith('fd') || lower.startsWith('fe80');
+  }
+  return true;
+}
+
+async function assertPublicHttpUrl(rawUrl) {
+  const parsed = new URL(rawUrl);
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http(s) URLs are allowed.');
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.local')) throw new Error('Local hostnames are not allowed.');
+  const addresses = net.isIP(hostname) ? [{ address: hostname }] : await dns.lookup(hostname, { all: true });
+  if (!addresses.length || addresses.some(a => isPrivateIp(a.address))) throw new Error('Private or local network addresses are not allowed.');
+  return parsed.toString();
+}
+
+function stripHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleFromHtml(html, url) {
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+  return stripHtml(title || '') || new URL(url).hostname;
+}
+
+function chunkWebDoc(doc) {
+  const chunks = [];
+  const sentences = doc.text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [doc.text];
+  let buf = '';
+  let i = 0;
+  for (const s of sentences) {
+    if ((buf + ' ' + s).length > 1100 && buf.length > 0) {
+      chunks.push({ ...doc, chunkId: `${doc.id}#${i++}`, text: buf.trim() });
+      buf = s;
+    } else {
+      buf += ' ' + s;
+    }
+    if (chunks.length >= 8) break;
+  }
+  if (buf.trim() && chunks.length < 8) chunks.push({ ...doc, chunkId: `${doc.id}#${i++}`, text: buf.trim() });
+  return chunks;
+}
+
+async function browserbaseFetch(url) {
+  const res = await fetch('https://api.browserbase.com/v1/fetch', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BB-API-Key': process.env.BROWSERBASE_API_KEY
+    },
+    body: JSON.stringify({ url, allowRedirects: true, proxies: process.env.BROWSERBASE_FETCH_PROXIES === 'true' })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Browserbase fetch ${res.status}: ${json.message || json.error || JSON.stringify(json)}`);
+  return json;
+}
+
+async function directFetch(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'SubsiWikiBot/0.1 (+https://local.subsiwiki)' }
+    });
+    const content = await res.text();
+    return {
+      id: `direct-${Date.now()}`,
+      statusCode: res.status,
+      headers: Object.fromEntries(res.headers.entries()),
+      content,
+      contentType: res.headers.get('content-type') || 'text/plain',
+      encoding: 'utf-8'
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchLivePage(rawUrl) {
+  const url = await assertPublicHttpUrl(rawUrl);
+  const fetched = process.env.BROWSERBASE_API_KEY ? await browserbaseFetch(url) : await directFetch(url);
+  const html = fetched.content || '';
+  const text = stripHtml(html).slice(0, 16_000);
+  if (text.length < 80) throw new Error('Fetched page did not contain enough readable text.');
+  const doc = {
+    id: `web:${url}`,
+    relPath: url,
+    title: titleFromHtml(html, url),
+    url,
+    kind: 'live web page',
+    sourceType: 'web',
+    body: text,
+    text,
+    statusCode: fetched.statusCode,
+    fetchedAt: new Date().toISOString()
+  };
+  return { doc, chunks: chunkWebDoc(doc) };
+}
+
+async function browserbaseSearch(query) {
+  if (!process.env.BROWSERBASE_API_KEY) throw new Error('BROWSERBASE_API_KEY is required for live web search.');
+  const res = await fetch('https://api.browserbase.com/v1/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-BB-API-Key': process.env.BROWSERBASE_API_KEY
+    },
+    body: JSON.stringify({ query, numResults: 8 })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Browserbase search ${res.status}: ${json.message || json.error || JSON.stringify(json)}`);
+  return json.results || [];
+}
+
+function toolResultText(label, sources) {
+  if (!sources.length) return `${label}: no evidence found.`;
+  return `${label}:\n` + sources.map(s => {
+    const loc = s.url || s.path;
+    return `[${s.id}] ${s.title}\nType: ${s.sourceType || s.kind}\nLocation: ${loc}\nExcerpt: ${s.excerpts[0]}`;
+  }).join('\n\n');
+}
+
+async function askOpenRouterWithTools(messages) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost:5173',
+      'X-Title': process.env.OPENROUTER_APP_NAME || 'SubsiWiki AI'
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      temperature: 0.2,
+      tools: AGENT_TOOLS,
+      messages
+    })
+  });
+  if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
+  return (await res.json()).choices?.[0]?.message;
+}
+
+async function runAgent(question, { allowWeb = false } = {}) {
+  await loadKnowledgeBase();
+  const sourceMap = new Map();
+  const trace = [];
+  const limits = { webFetches: 0, webSearches: 0 };
+
+  function addSources(chunks) {
+    const raw = uniqueSources(chunks);
+    const added = [];
+    for (const s of raw) {
+      const key = s.url || s.path;
+      if (sourceMap.has(key)) {
+        const existing = sourceMap.get(key);
+        existing.excerpts.push(...(s.excerpts || []).filter(e => !existing.excerpts.includes(e)));
+        added.push(existing);
+      } else {
+        const next = { ...s, id: sourceMap.size + 1 };
+        sourceMap.set(key, next);
+        added.push(next);
+      }
+    }
+    return added;
+  }
+
+  async function runTool(name, args) {
+    if (name === 'search_vault') {
+      const chunks = retrieve(String(args.query || ''), 8);
+      const sources = addSources(chunks);
+      trace.push({ tool: name, input: args.query, sources: sources.map(s => s.id) });
+      return toolResultText('Vault search results', sources);
+    }
+    if (name === 'fetch_url') {
+      if (!allowWeb) return 'Live web access is disabled for this run.';
+      if (limits.webFetches >= MAX_WEB_FETCHES) return 'Live web fetch limit reached.';
+      limits.webFetches += 1;
+      const { chunks } = await fetchLivePage(String(args.url || ''));
+      const sources = addSources(chunks);
+      trace.push({ tool: name, input: args.url, reason: args.reason, sources: sources.map(s => s.id) });
+      return toolResultText('Fetched live web page', sources);
+    }
+    if (name === 'search_web') {
+      if (!allowWeb) return 'Live web access is disabled for this run.';
+      if (limits.webSearches >= MAX_WEB_SEARCHES) return 'Live web search limit reached.';
+      limits.webSearches += 1;
+      const results = await browserbaseSearch(String(args.query || ''));
+      trace.push({ tool: name, input: args.query, resultCount: results.length });
+      return 'Web search results:\n' + results.map((r, i) => `${i + 1}. ${r.title || r.name}\nURL: ${r.url || r.link}\nSnippet: ${r.snippet || r.description || ''}`).join('\n\n');
+    }
+    return `Unknown tool: ${name}`;
+  }
+
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'You are SubsiWiki AI, a minimal evidence-gathering agent.',
+        'Use search_vault first. Use live web only when the vault is missing, stale, or the user asks for current information.',
+        'Prefer official sources. Fetch specific URLs before relying on web search snippets.',
+        'Every factual claim in the final answer must cite gathered evidence with bracket citations like [1].',
+        'If evidence is insufficient, say what is missing. Do not invent URLs or sources.'
+      ].join(' ')
+    },
+    { role: 'user', content: question }
+  ];
+
+  for (let step = 0; step < MAX_AGENT_STEPS; step++) {
+    const reply = await askOpenRouterWithTools(messages);
+    messages.push(reply);
+    const calls = reply?.tool_calls || [];
+    if (!calls.length) {
+      return { answer: reply?.content?.trim() || 'No answer returned.', sources: [...sourceMap.values()], trace, usedLLM: true, usedAgent: true };
+    }
+    for (const tc of calls) {
+      const call = normalizeToolCall(tc);
+      let content;
+      try {
+        content = await runTool(call.name, call.args);
+      } catch (err) {
+        content = `Tool error: ${err.message}`;
+      }
+      messages.push({ role: 'tool', tool_call_id: call.id, content });
+    }
+  }
+
+  const sources = [...sourceMap.values()];
+  return {
+    answer: sources.length
+      ? `I stopped because the agent step limit was reached. Here are the gathered sources: ${sources.map(s => `[${s.id}]`).join(' ')}`
+      : 'I stopped because the agent step limit was reached before gathering evidence.',
+    sources,
+    trace,
+    usedLLM: true,
+    usedAgent: true
+  };
+}
+
 function fallbackAnswer(question, sources) {
   if (!sources.length) return 'I could not find relevant information in the SubsiWiki knowledge base. Try rephrasing or ingest more sources.';
   return `I found relevant SubsiWiki sources, but no LLM API key is configured, so this is a retrieval-only result. Review these excerpts for your question: "${question}"\n\n` +
@@ -202,12 +503,16 @@ app.post('/api/query', async (req, res) => {
     const question = String(req.body?.question || '').trim();
     if (!question) return res.status(400).json({ error: 'Question is required.' });
     await loadKnowledgeBase();
+    if (process.env.OPENROUTER_API_KEY && req.body?.agent !== false) {
+      const result = await runAgent(question, { allowWeb: Boolean(req.body?.allowWeb) });
+      return res.json(result);
+    }
     const chunks = retrieve(question, 10);
     const sources = uniqueSources(chunks);
     const answer = process.env.OPENROUTER_API_KEY
       ? await askOpenRouter(question, chunks, sources)
       : fallbackAnswer(question, sources);
-    res.json({ answer, sources, usedLLM: Boolean(process.env.OPENROUTER_API_KEY) });
+    res.json({ answer, sources, usedLLM: Boolean(process.env.OPENROUTER_API_KEY), usedAgent: false, trace: [] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Server error' });
