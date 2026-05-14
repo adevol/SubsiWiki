@@ -1,79 +1,81 @@
-# Web Retrieval Considerations
+# Web Retrieval
 
-SubsiWiki starts from stored Obsidian knowledge and only reaches for the live web when the user allows it. This keeps answers fast, cheap, and grounded while still giving the agent a path to current information.
+How `search_web` and `fetch_url` behave at runtime. For the agent loop, evidence model, and SSRF rules, see [architecture.md](architecture.md).
 
-## Browserbase
+## Tools
 
-Browserbase is the simpler first integration for this app because it provides hosted browser infrastructure, web search, lightweight fetch, proxies, observability, and agent-oriented tooling behind one service boundary.
+| Tool | Arguments | When the agent calls it | Returns |
+|------|-----------|-------------------------|---------|
+| `search_web` | `query` | Vault has no useful evidence and the agent needs candidate URLs | Up to 8 Browserbase Search results (title, URL, snippet) |
+| `fetch_url` | `url`, `reason` | The agent has a specific URL worth reading | One web evidence source: title, URL, extracted text chunks |
 
-In the current implementation:
+The agent is instructed to call `search_vault` first; web tools are a fallback. See the system prompt in [server/index.js](../server/index.js).
 
-- `search_web` calls Browserbase Search at `POST /v1/search`.
-- `fetch_url` calls Browserbase Fetch at `POST /v1/fetch` when `BROWSERBASE_API_KEY` is set.
-- If Browserbase is not configured, `fetch_url` falls back to direct server-side fetching.
+## Enabling live web
 
-Browserbase Fetch is best for quick page retrieval. It does not execute JavaScript and has response size and timeout limits, so JavaScript-heavy pages may eventually need full browser sessions through Playwright or Stagehand.
+The `/api/query` endpoint accepts `allowWeb` in the request body. **It defaults to `true`.** To disable live web for a request, send `allowWeb: false`; both web tools will return `"Live web access is disabled for this run."` to the model without making any network call.
 
-## Scrapling
+## Configuration
 
-Scrapling is still a strong option, but it solves a slightly different problem. It is a Python scraping and crawling framework with fetchers, dynamic fetchers, stealth fetchers, spiders, adaptive selectors, proxy rotation, sessions, and an MCP server.
+| Env var | Effect | Default |
+|---------|--------|---------|
+| `BROWSERBASE_API_KEY` | Required for `search_web`. Switches `fetch_url` from direct fetch to Browserbase Fetch | unset |
+| `BROWSERBASE_FETCH_PROXIES` | When `"true"`, Browserbase Fetch routes through proxies | `"false"` |
+| `AGENT_MAX_WEB_FETCHES` | Hard cap on `fetch_url` calls per run | `15` |
+| `AGENT_MAX_WEB_SEARCHES` | Hard cap on `search_web` calls per run | `5` |
+| `AGENT_MAX_STEPS` | Total tool/answer steps before the loop bails | `8` |
+| `OPENROUTER_SOURCE_CHECK_MODEL` | Optional verifier model used when `checkSources` is enabled | `OPENROUTER_MODEL` |
 
-Scrapling becomes attractive when SubsiWiki needs:
+## `fetch_url` pipeline
 
-- Scheduled crawls across many pages.
-- Repeatable extraction from structured pages.
-- CSS/XPath-heavy scraping.
-- Adaptive selectors that survive site changes.
-- Self-hosted control over crawling and parsing.
-- High-volume ingestion where managed browser costs become significant.
+1. `assertPublicHttpUrl` validates the URL — see [SSRF Rules](architecture.md#ssrf-rules) in architecture.md.
+2. If `BROWSERBASE_API_KEY` is set, `POST /v1/fetch` to Browserbase; otherwise a direct `fetch()` with a 10 s timeout and `User-Agent: SubsiWikiBot/0.1`.
+3. HTML is stripped to text and capped at 16 KB.
+4. If under 80 characters of readable text remain, the tool errors with `"Fetched page did not contain enough readable text."`
+5. Remaining text is chunked into up to 8 chunks of ~1100 characters each.
 
-The trade-off is operational complexity. A production Scrapling deployment likely needs Python workers, queues, browser dependencies, proxy configuration, crawl checkpoints, and worker-level observability.
+Browserbase Fetch does not execute JavaScript. Single-page apps and pages that hydrate content client-side will look empty.
 
-## Recommended Split
+## `search_web` pipeline
 
-Use Browserbase first for user-facing research:
+`POST /v1/search` to Browserbase with `numResults: 8`. Each result is formatted for the agent as a numbered block with title, URL, and snippet. Without `BROWSERBASE_API_KEY`, the tool errors immediately.
 
-```mermaid
-flowchart TD
-  User[User asks a question] --> Vault[Agent searches vault]
-  Vault --> Browserbase[Agent searches/fetches a few live sources through Browserbase]
-  Browserbase --> Answer[Answer with citations]
+## Error contract
+
+What the agent literally receives:
+
+- Live web disabled: `"Live web access is disabled for this run."`
+- Fetch limit reached: `"Live web fetch limit reached."`
+- Search limit reached: `"Live web search limit reached."`
+- SSRF rejection, fetch timeout, Browserbase non-200, or empty page: `"Tool error: <message>"`
+
+Errors are surfaced to the model so it can decide whether to try a different URL, retry, or give up cleanly.
+
+## Verifying locally
+
+Minimum `.env`:
+
+```
+OPENROUTER_API_KEY=...
+BROWSERBASE_API_KEY=...
 ```
 
-Use Scrapling later for ingestion workflows:
-
-```mermaid
-flowchart TD
-  Schedule[Scheduled job] --> Spider[Scrapling spider]
-  Spider --> Extract[Extract pages and structured fields]
-  Extract --> Store[Store as vault/web evidence]
-  Store --> Index[Index for later questions]
+```
+curl -s http://localhost:8787/api/query \
+  -H 'content-type: application/json' \
+  -d '{"question":"What EU funding is open for small businesses?","checkSources":true}'
 ```
 
-This keeps the interactive agent simple while leaving room for serious scraping infrastructure when it is justified.
+The response `trace` array shows every tool call in order with inputs and resulting source IDs. An empty `trace` means the agent answered from the vault alone.
+When `checkSources` is true, the response also includes a `sourceCheck` object with `pass`, `warn`, or `fail` status and any verifier issues.
 
-## Production Concerns
+## Current scope
 
-For many users in parallel, add these before allowing broad live web use:
+The implementation deliberately stops at a small operational footprint:
 
-- Per-user and per-tenant budgets.
-- Per-domain concurrency limits.
-- URL allow/deny lists.
-- Robots.txt policy for crawls.
-- Cache by normalized URL and content hash.
-- Run logs that record tool calls, URLs, timestamps, and source IDs.
-- A queue for long-running browser sessions or crawls.
-- Tenant isolation for stored pages and browser contexts.
+- One-shot, on-demand page fetches of public HTTP(S) URLs.
+- Lexical web search via Browserbase.
+- In-memory results: fetched pages are not persisted or cached between runs, or saved to the knowledge base.
+- No JavaScript rendering, scheduled crawls, structured extraction, vector retrieval, per-user/tenant budgets, robots.txt enforcement, URL allow/deny lists, or response caching.
 
-The model should not receive an open-ended browser unless the product really needs it. Prefer narrow tools that return clean evidence.
-
-## Current Limitations
-
-- Live fetched pages are not persisted.
-- Direct fallback fetch does not render JavaScript.
-- Browserbase full browser sessions are not wired yet.
-- Search requires `BROWSERBASE_API_KEY`.
-- Retrieval is lexical, not vector-based.
-- There is no user or tenant model yet.
-
-These limitations are acceptable for the current local MVP because the main architecture is now in place: the agent gathers evidence through narrow tools and answers from that evidence.
+For a fuller implementation that needs scheduled crawls, dynamic page rendering, adaptive CSS/XPath selectors, or proxy rotation, [Scrapling](https://github.com/D4Vinci/Scrapling) is the natural upgrade path, a Python scraping framework with spiders, stealth fetchers, and an MCP server. Browserbase remains the simpler choice while those capabilities aren't needed.
