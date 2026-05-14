@@ -10,6 +10,7 @@ React + Express app that lets users ask an Obsidian knowledge base questions and
 - Browserbase support for live web search and hosted page fetches.
 - Direct server-side URL fetch fallback when Browserbase is not configured.
 - Citation-first answer style: every factual claim should cite gathered evidence.
+- Optional source-check pass that asks a verifier model to audit the answer against gathered excerpts.
 - Guardrails for live web usage: step limits, fetch/search limits, and private-network URL blocking.
 - Research trace shown in the UI so users can see which tools ran.
 
@@ -44,6 +45,7 @@ Without `BROWSERBASE_API_KEY`, the agent can still fetch explicit public URLs wi
 - Gives the model narrow tools: `search_vault`, `fetch_url`, and `search_web`.
 - Normalizes vault and web pages into the same source format.
 - Forces bracket citations like `[1]`.
+- When `checkSources` is enabled, runs a second model pass that returns `pass`, `warn`, or `fail` with source-support issues.
 - Shows cited sources and the research trace in the frontend.
 
 ## Useful Endpoints

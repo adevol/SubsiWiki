@@ -53,6 +53,23 @@ The model receives three narrow tools:
 
 The system prompt tells the model to prefer the vault, use live web only when needed, prefer official sources, and avoid uncited claims.
 
+## Source Checking
+
+The `/api/query` endpoint accepts `checkSources: true`. When enabled and `OPENROUTER_API_KEY` is configured, the server runs a second verifier model call after the answer is generated. The verifier receives only the final answer, gathered source excerpts, and a deterministic list of missing citation IDs. It returns:
+
+```ts
+type SourceCheck = {
+  status: 'pass' | 'warn' | 'fail';
+  summary: string;
+  issues: string[];
+  citedIds: number[];
+  missingCitationIds: number[];
+  model: string;
+};
+```
+
+This check is advisory. It does not rewrite or block the answer, but the UI surfaces the result so a user can quickly see whether citations look supported.
+
 ## Guardrails
 
 The harness has small hard limits:

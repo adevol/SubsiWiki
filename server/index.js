@@ -9,6 +9,7 @@ import path from 'node:path';
 const app = express();
 const PORT = process.env.PORT || 8787;
 const MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+const SOURCE_CHECK_MODEL = process.env.OPENROUTER_SOURCE_CHECK_MODEL || MODEL;
 const VAULT_DIR = path.resolve(process.env.VAULT_DIR || 'SubsiWiki');
 const MAX_AGENT_STEPS = Number(process.env.AGENT_MAX_STEPS || 8);
 const MAX_WEB_FETCHES = Number(process.env.AGENT_MAX_WEB_FETCHES || 15);
@@ -203,6 +204,88 @@ function normalizeToolCall(tc) {
     name: fn.name,
     args: JSON.parse(fn.arguments || '{}')
   };
+}
+
+function parseJsonObject(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('Verifier did not return JSON.');
+    return JSON.parse(match[0]);
+  }
+}
+
+function citationIds(text) {
+  return [...text.matchAll(/\[(\d+)\]/g)].map(m => Number(m[1]));
+}
+
+async function checkAnswerSources(answer, sources) {
+  const ids = new Set(sources.map(s => s.id));
+  const citedIds = citationIds(answer);
+  const missingCitationIds = [...new Set(citedIds.filter(id => !ids.has(id)))];
+  const sourceContext = sources.map(s => {
+    const loc = s.url || s.path;
+    const excerpts = (s.excerpts || []).slice(0, 3).map((e, i) => `Excerpt ${i + 1}: ${e}`).join('\n');
+    return `[${s.id}] ${s.title}\nType: ${s.sourceType || s.kind}\nLocation: ${loc}\n${excerpts}`;
+  }).join('\n\n---\n\n');
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost:5173',
+      'X-Title': process.env.OPENROUTER_APP_NAME || 'SubsiWiki AI'
+    },
+    body: JSON.stringify({
+      model: SOURCE_CHECK_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You audit whether an answer is supported by the cited sources.',
+            'Check only against the provided source excerpts and citation IDs.',
+            'Return strict JSON with keys: status, summary, issues.',
+            'status must be one of "pass", "warn", or "fail".',
+            'issues must be an array of short strings.',
+            'Do not use markdown. Do not add extra text outside JSON.'
+          ].join(' ')
+        },
+        {
+          role: 'user',
+          content: `Answer:\n${answer}\n\nSources:\n${sourceContext || 'No sources provided.'}\n\nKnown missing citation IDs from deterministic check: ${missingCitationIds.length ? missingCitationIds.join(', ') : 'none'}`
+        }
+      ]
+    })
+  });
+  if (!res.ok) throw new Error(`OpenRouter source check error ${res.status}: ${await res.text()}`);
+  const text = (await res.json()).choices?.[0]?.message?.content?.trim() || '{}';
+  const checked = parseJsonObject(text);
+  return {
+    status: ['pass', 'warn', 'fail'].includes(checked.status) ? checked.status : 'warn',
+    summary: String(checked.summary || 'Source check completed.'),
+    issues: Array.isArray(checked.issues) ? checked.issues.map(String) : [],
+    citedIds: [...new Set(citedIds)],
+    missingCitationIds,
+    model: SOURCE_CHECK_MODEL
+  };
+}
+
+async function maybeCheckAnswerSources(answer, sources) {
+  try {
+    return await checkAnswerSources(answer, sources);
+  } catch (err) {
+    return {
+      status: 'warn',
+      summary: 'Source check could not complete.',
+      issues: [err.message || 'Unknown source-check error.'],
+      citedIds: [...new Set(citationIds(answer))],
+      missingCitationIds: [],
+      model: SOURCE_CHECK_MODEL
+    };
+  }
 }
 
 function toolSchema(name, description, properties, required = Object.keys(properties)) {
@@ -503,8 +586,12 @@ app.post('/api/query', async (req, res) => {
     const question = String(req.body?.question || '').trim();
     if (!question) return res.status(400).json({ error: 'Question is required.' });
     await loadKnowledgeBase();
+    const shouldCheckSources = Boolean(req.body?.checkSources) && Boolean(process.env.OPENROUTER_API_KEY);
     if (process.env.OPENROUTER_API_KEY && req.body?.agent !== false) {
-      const result = await runAgent(question, { allowWeb: Boolean(req.body?.allowWeb) });
+      const result = await runAgent(question, { allowWeb: req.body?.allowWeb !== false });
+      if (shouldCheckSources) {
+        result.sourceCheck = await maybeCheckAnswerSources(result.answer, result.sources || []);
+      }
       return res.json(result);
     }
     const chunks = retrieve(question, 10);
@@ -512,7 +599,8 @@ app.post('/api/query', async (req, res) => {
     const answer = process.env.OPENROUTER_API_KEY
       ? await askOpenRouter(question, chunks, sources)
       : fallbackAnswer(question, sources);
-    res.json({ answer, sources, usedLLM: Boolean(process.env.OPENROUTER_API_KEY), usedAgent: false, trace: [] });
+    const sourceCheck = shouldCheckSources ? await maybeCheckAnswerSources(answer, sources) : undefined;
+    res.json({ answer, sources, usedLLM: Boolean(process.env.OPENROUTER_API_KEY), usedAgent: false, trace: [], sourceCheck });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Server error' });
