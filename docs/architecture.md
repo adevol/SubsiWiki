@@ -57,11 +57,21 @@ The system prompt tells the model to prefer the vault, use live web only when ne
 
 The harness has small hard limits:
 
-- `AGENT_MAX_STEPS`
-- `AGENT_MAX_WEB_FETCHES`
-- `AGENT_MAX_WEB_SEARCHES`
+- `AGENT_MAX_STEPS` (default 8)
+- `AGENT_MAX_WEB_FETCHES` (default 15)
+- `AGENT_MAX_WEB_SEARCHES` (default 5)
 
-`fetch_url` also blocks non-http protocols, localhost, `.local`, and private network IP ranges. This is important because user-provided URLs should not be able to make the server request internal services.
+### SSRF Rules
+
+`fetch_url` validates every URL with `assertPublicHttpUrl` before any network call. The validator rejects:
+
+- Non-`http(s)` protocols.
+- `localhost` and any hostname ending in `.local`.
+- IPv4 addresses in private ranges (`10/8`, `127/8`, `169.254/16`, `172.16/12`, `192.168/16`, `0/8`).
+- IPv6 loopback (`::1`), unique-local (`fc..`, `fd..`), and link-local (`fe80..`) addresses.
+- Hostnames whose DNS lookup resolves to any of the above.
+
+User-supplied URLs are never trusted to be public — DNS resolution happens before the fetch so an attacker cannot route the server at internal services via a public hostname that resolves to private space.
 
 ## Current Storage
 
