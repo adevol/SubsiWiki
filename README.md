@@ -36,6 +36,17 @@ BROWSERBASE_API_KEY=...
 
 Without `BROWSERBASE_API_KEY`, the agent can still fetch explicit public URLs with the local fallback, but `search_web` is unavailable.
 
+## Python Harness
+
+The Python backend migration lives in `main.py`: a minimal LiteLLM harness with BM25 `search_vault` and Browserbase `search_web` tools.
+
+```bash
+uv run main.py
+```
+
+Set `BROWSERBASE_API_KEY` in `.env` to enable web search.
+Set `VAULT_DIR` to change the vault path; it defaults to `SubsiWiki`.
+
 ## How It Works
 
 - Reads Markdown from `SubsiWiki/`.
