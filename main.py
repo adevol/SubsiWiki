@@ -12,6 +12,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.retrievers.bm25 import BM25Retriever
 
 load_dotenv()
+logger = logging.getLogger("subsiwiki")
 logging.getLogger("bm25s").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
@@ -51,13 +52,33 @@ def build_vault_index(vault: Path) -> BM25Retriever | None:
         A configured :class:`BM25Retriever` with ``similarity_top_k=8`` or 
         ``None`` if no markdown files are found in the vault.
     """
-    docs = SimpleDirectoryReader(
-        vault,
-        recursive=True,
-        required_exts=[".md"],
-        filename_as_id=True,
-        file_metadata=lambda p: {"path": Path(p).relative_to(vault).as_posix()},
-    ).load_data()
+    if not vault.exists():
+        logger.warning("Vault directory does not exist: %s", vault)
+        return None
+    if not vault.is_dir():
+        logger.warning("Vault path is not a directory: %s", vault)
+        return None
+
+    markdown_files = sorted(vault.rglob("*.md"))
+    if not markdown_files:
+        logger.warning("Vault contains no markdown files: %s", vault)
+        return None
+
+    docs = []
+    for markdown_file in markdown_files:
+        try:
+            docs.extend(SimpleDirectoryReader(
+                input_files=[str(markdown_file)],
+                filename_as_id=True,
+                file_metadata=lambda p: {"path": Path(p).relative_to(vault).as_posix()},
+            ).load_data())
+        except Exception:
+            logger.exception("Failed to read vault markdown file: %s", markdown_file)
+
+    if not docs:
+        logger.warning("No markdown documents could be loaded from vault: %s", vault)
+        return None
+
     nodes = SentenceSplitter(chunk_size=900, chunk_overlap=80).get_nodes_from_documents(docs)
     return BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=8) if nodes else None
 
@@ -95,18 +116,23 @@ def results(kind: Literal["vault", "web"], query: str) -> tuple[dict, ...]:
     key = os.getenv("BROWSERBASE_API_KEY")
     if not key:
         return ()
-    r = httpx.post(
-        "https://api.browserbase.com/v1/search",
-        headers={"Content-Type": "application/json", "X-BB-API-Key": key},
-        json={"query": query, "numResults": 5},
-        timeout=20,
-    )
-    r.raise_for_status()
+    try:
+        r = httpx.post(
+            "https://api.browserbase.com/v1/search",
+            headers={"Content-Type": "application/json", "X-BB-API-Key": key},
+            json={"query": query, "numResults": 5},
+            timeout=20,
+        )
+        r.raise_for_status()
+        payload = r.json()
+    except Exception:
+        logger.exception("Browserbase web search failed for query: %s", query)
+        raise
     return tuple(build_source(
         x.get("title") or x.get("name") or "(untitled)",
         x.get("snippet") or x.get("description") or "",
         url=x.get("url") or x.get("link") or "",
-    ) for x in r.json().get("results", []))
+    ) for x in payload.get("results", []))
 
 def number_sources(sources: list[dict]) -> list[dict]:
     """Assign sequential ``id`` fields to sources, dropping duplicate mentions of the same source.
@@ -170,14 +196,24 @@ def answer(question: str, allow_web: bool = False) -> dict:
             trace (list[dict]): Tool-call trace for UI display.
             usedLLM (bool): True if the LLM produced ``answer``, False if fallback.
     """
+    found = []
+    web_error = ""
     try:
-        found = list(results("vault", question)) + (list(results("web", question)) if allow_web else [])
+        found.extend(results("vault", question))
     except Exception:
-        found = list(results("vault", question))
+        logger.exception("Vault search failed for query: %s", question)
+    if allow_web:
+        try:
+            found.extend(results("web", question))
+        except Exception as e:
+            web_error = str(e) or e.__class__.__name__
     sources = number_sources(found)
     trace = [{"tool": "search_vault", "input": question, "sources": [s["id"] for s in sources if s["sourceType"] == "vault"]}]
     if allow_web:
-        trace.append({"tool": "search_web", "input": question, "sources": [s["id"] for s in sources if s["sourceType"] == "web"]})
+        web_trace = {"tool": "search_web", "input": question, "sources": [s["id"] for s in sources if s["sourceType"] == "web"]}
+        if web_error:
+            web_trace["error"] = web_error
+        trace.append(web_trace)
     if not os.getenv("OPENROUTER_API_KEY"):
         return {"answer": fallback(question, sources), "sources": sources, "trace": trace, "usedLLM": False}
     try:
@@ -201,7 +237,7 @@ def api_query(body: dict) -> dict:
     question = str(body.get("question", "")).strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
-    return answer(question, allow_web=bool(body.get("allowWeb")))
+    return answer(question, allow_web=body.get("allowWeb"))
 
 @app.get("/api/sources")
 def api_sources() -> list[dict]:
