@@ -9,6 +9,7 @@ React + FastAPI app that lets users ask an Obsidian knowledge base questions and
 - Optional live web search through Browserbase.
 - Citation-first answer style: every factual claim should cite gathered evidence.
 - Fallback retrieval when the LLM call fails.
+- Optional small-model source checking.
 - Research trace shown in the UI so users can see which tools ran.
 
 ## Setup

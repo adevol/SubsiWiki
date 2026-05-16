@@ -25,8 +25,10 @@ string such as `"true"`, the backend does not search the web.
 | Env var | Effect | Default |
 |---------|--------|---------|
 | `BROWSERBASE_API_KEY` | Enables Browserbase Search | unset |
+| `WEB_CACHE_TTL_SECONDS` | Caches Browserbase results per query; set `0` to disable | `3600` |
 | `OPENROUTER_API_KEY` | Enables generated LLM answers | unset |
 | `OPENROUTER_MODEL` | Overrides the model in `config.yaml` | unset |
+| `OPENROUTER_SOURCE_CHECK_MODEL` | Verifier model for `checkSources` | `openai/gpt-5-mini` |
 | `MAX_TOKENS` | Caps the LLM response | `1200` |
 
 Without `BROWSERBASE_API_KEY`, web search is skipped and vault retrieval still
@@ -54,11 +56,12 @@ page.
 
 ## Caching
 
-Search results are cached in process by `(kind, query)`. `POST /api/reload`
-clears both vault and web result caches.
+Search results are cached in process by query for `WEB_CACHE_TTL_SECONDS`
+seconds. `POST /api/reload` clears both vault and web result caches.
 
-Because web results can go stale, restart the API or call `/api/reload` when
-testing current or time-sensitive funding questions.
+Because web results can go stale, lower `WEB_CACHE_TTL_SECONDS`, restart the
+API, or call `/api/reload` when testing current or time-sensitive funding
+questions.
 
 ## Error Handling
 

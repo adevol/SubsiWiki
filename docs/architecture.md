@@ -30,7 +30,8 @@ alongside the Vite frontend.
 ```json
 {
   "question": "What funding could a small manufacturer qualify for?",
-  "allowWeb": false
+  "allowWeb": false,
+  "checkSources": false
 }
 ```
 
@@ -40,7 +41,9 @@ The backend then:
 2. Searches Browserbase only when `allowWeb` is exactly `true`.
 3. Deduplicates and numbers sources.
 4. Calls the configured OpenRouter model when `OPENROUTER_API_KEY` is set.
-5. Returns a deterministic excerpt fallback when the model is unavailable.
+5. Optionally runs a second source-check model when `checkSources` is exactly
+   `true`.
+6. Returns a deterministic excerpt fallback when the model is unavailable.
 
 ## Vault Retrieval
 
@@ -48,8 +51,8 @@ The vault path comes from `VAULT_DIR` and defaults to `SubsiWiki`. Markdown file
 are loaded recursively, chunked with LlamaIndex's `SentenceSplitter`, and indexed
 with `BM25Retriever`.
 
-The index is cached in process. `POST /api/reload` clears the retrieval caches
-and rebuilds the vault index.
+The index is cached in process. Web search results use a short TTL cache.
+`POST /api/reload` clears the retrieval caches and rebuilds the vault index.
 
 Vault loading is tolerant:
 
@@ -87,6 +90,26 @@ model comes from `OPENROUTER_MODEL` or `config.yaml`.
 When the model key is missing or the model call fails, the API still returns a
 retrieval-only answer listing the top source excerpts.
 
+## Source Checking
+
+When `checkSources` is exactly `true`, the backend runs a second, smaller model
+after the answer is generated. The verifier receives the final answer and the
+retrieved source excerpts, then returns:
+
+```ts
+type SourceCheck = {
+  status: 'pass' | 'warn' | 'fail';
+  summary: string;
+  issues: string[];
+  citedIds: number[];
+  missingCitationIds: number[];
+  model: string;
+};
+```
+
+The verifier model is configurable with `OPENROUTER_SOURCE_CHECK_MODEL` and
+defaults to `openai/gpt-5-mini`.
+
 ## Trace And Monitoring
 
 Every response includes a `trace` array that records which retrieval steps ran
@@ -111,9 +134,9 @@ Example trace with a web failure:
 ## Current Scope
 
 The Python backend does not currently implement an agent loop, `fetch_url`, live
-page extraction, source checking, SSRF validation, or per-request web budgets.
-Browserbase is used only for `/v1/search`, and those results are snippets rather
-than fetched page contents.
+page extraction, SSRF validation, or per-request web budgets. Browserbase is
+used only for `/v1/search`, and those results are snippets rather than fetched
+page contents.
 
 The legacy Node server remains in `server/index.js` for reference and can still
 be run with `npm run server:node`, but it is not the default runtime.

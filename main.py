@@ -1,9 +1,10 @@
-import logging, os
+import json, logging, os, re
 from functools import cache
 from pathlib import Path
 from typing import Literal
 
 import httpx, litellm, yaml
+from cachetools import TTLCache
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,13 +18,21 @@ logging.getLogger("bm25s").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 litellm.suppress_debug_info = True
+WEB_CACHE_TTL = int(os.getenv("WEB_CACHE_TTL_SECONDS", "3600"))
+WEB_CACHE = TTLCache(maxsize=1024, ttl=WEB_CACHE_TTL) if WEB_CACHE_TTL > 0 else None
 
+@cache
 def config() -> dict:
     return yaml.safe_load(Path(os.getenv("SUBSIWIKI_CONFIG", "config.yaml")).read_text(encoding="utf-8"))
 
-def model_name() -> str:
-    model = os.getenv("OPENROUTER_MODEL") or config()["model"]
+def _openrouter(model: str) -> str:
     return model if model.startswith("openrouter/") else f"openrouter/{model}"
+
+def model_name() -> str:
+    return _openrouter(os.getenv("OPENROUTER_MODEL") or config()["model"])
+
+def source_check_model() -> str:
+    return _openrouter(os.getenv("OPENROUTER_SOURCE_CHECK_MODEL", "openai/gpt-5-mini"))
 
 def build_source(title: str, text: str, *, path: str = "", url: str = "", score: float = 0) -> dict:
     """Return a structured source dictionary."""
@@ -42,15 +51,15 @@ def vault_path() -> Path:
 
 @cache
 def build_vault_index(vault: Path) -> BM25Retriever | None:
-    """Build (and cache) a BM25 retriever over every markdown file in ``vault``.
+    """Build a BM25 retriever over the vault's markdown files.
 
     Args:
         vault: Absolute path to the vault root. Used as the cache key, so
             different paths get independent indexes.
 
     Returns:
-        A configured :class:`BM25Retriever` with ``similarity_top_k=8`` or 
-        ``None`` if no markdown files are found in the vault.
+        Configured ``BM25Retriever`` with ``similarity_top_k=8``, or ``None``
+        if the vault is missing, empty, or contains no readable markdown.
     """
     if not vault.exists():
         logger.warning("Vault directory does not exist: %s", vault)
@@ -83,39 +92,23 @@ def build_vault_index(vault: Path) -> BM25Retriever | None:
     return BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=8) if nodes else None
 
 @cache
-def results(kind: Literal["vault", "web"], query: str) -> tuple[dict, ...]:
-    """Retrieve sources for ``query`` from either the vault or the web.
-
-    Results are cached for the process lifetime keyed on ``(kind, query)``.
-    Vault cache is cleared via ``/api/reload``; the web cache is not invalidated,
-    so web results can go stale.
-
-    Args:
-        kind: can be ``"vault"`` for BM25 over the local markdown vault, ``"web"`` for Browserbase.
-        query: The search string passed verbatim to the retriever / search API.
-
-    Returns:
-        Tuple of source dicts. Empty tuple if the vault is empty, 
-        ``BROWSERBASE_API_KEY`` is unset, or ``kind`` is unrecognised.
-
-    Raises:
-        httpx.HTTPStatusError: If Browserbase returns a non-2xx response.
-    """
-    if kind not in ("vault", "web"):
+def _vault_results(query: str) -> tuple[dict, ...]:
+    r = build_vault_index(vault_path())
+    if not r:
         return ()
-    if kind == "vault":
-        r = build_vault_index(vault_path())
-        if not r:
-            return ()
-        return tuple(build_source(
-            path := x.node.metadata["path"],
-            x.node.get_content(metadata_mode="none").strip(),
-            path=path,
-            score=x.score or 0,
-        ) for x in r.retrieve(query))
+    return tuple(build_source(
+        path := x.node.metadata["path"],
+        x.node.get_content(metadata_mode="none").strip(),
+        path=path,
+        score=x.score or 0,
+    ) for x in r.retrieve(query))
+
+def _web_results(query: str) -> tuple[dict, ...]:
     key = os.getenv("BROWSERBASE_API_KEY")
     if not key:
         return ()
+    if WEB_CACHE is not None and query in WEB_CACHE:
+        return WEB_CACHE[query]
     try:
         r = httpx.post(
             "https://api.browserbase.com/v1/search",
@@ -128,11 +121,38 @@ def results(kind: Literal["vault", "web"], query: str) -> tuple[dict, ...]:
     except Exception:
         logger.exception("Browserbase web search failed for query: %s", query)
         raise
-    return tuple(build_source(
+    web_sources = tuple(build_source(
         x.get("title") or x.get("name") or "(untitled)",
         x.get("snippet") or x.get("description") or "",
         url=x.get("url") or x.get("link") or "",
     ) for x in payload.get("results", []))
+    if WEB_CACHE is not None:
+        WEB_CACHE[query] = web_sources
+    return web_sources
+
+def results(kind: Literal["vault", "web"], query: str) -> tuple[dict, ...]:
+    """Retrieve sources for ``query`` from the vault or the web.
+
+    Vault results are cached per query for the process lifetime; web results
+    use a short TTL cache controlled by ``WEB_CACHE_TTL_SECONDS``.
+
+    Args:
+        kind: ``"vault"`` for BM25 over the local markdown vault, ``"web"`` for
+            Browserbase search.
+        query: The search string passed verbatim to the retriever / search API.
+
+    Returns:
+        Tuple of source dicts. Empty if the vault is empty, ``BROWSERBASE_API_KEY``
+        is unset, or ``kind`` is unrecognised.
+
+    Raises:
+        httpx.HTTPStatusError: If Browserbase returns a non-2xx response.
+    """
+    if kind == "vault":
+        return _vault_results(query)
+    if kind == "web":
+        return _web_results(query)
+    return ()
 
 def number_sources(sources: list[dict]) -> list[dict]:
     """Assign sequential ``id`` fields to sources, dropping duplicate mentions of the same source.
@@ -175,26 +195,49 @@ def fallback(question: str, sources: list[dict], error: str = "") -> str:
     answer += "\n\n".join(f"[{s['id']}] {s['title']}: {s['excerpts'][0]}" for s in sources[:5])
     return answer + (f"\n\nLLM call failed: {error}" if error else "")
 
-def answer(question: str, allow_web: bool = False) -> dict:
-    """Run retrieval over the vault (and optionally the web) and synthesise an answer.
+def source_check(answer_text: str, sources: list[dict]) -> dict:
+    cited_ids = sorted({int(x) for x in re.findall(r"\[(\d+)\]", answer_text)})
+    source_ids = {s["id"] for s in sources}
+    missing_ids = [i for i in cited_ids if i not in source_ids]
+    checked_sources = [s for s in sources if s["id"] in cited_ids] or sources[:5]
+    try:
+        msg = litellm.completion(
+            model=source_check_model(),
+            max_tokens=int(os.getenv("SOURCE_CHECK_MAX_TOKENS", "500")),
+            messages=[
+                {"role": "system", "content": "Check whether the answer is supported by the sources. Return only JSON with status pass|warn|fail, summary, and issues array."},
+                {"role": "user", "content": f"Answer:\n{answer_text}\n\nSources:\n{context(checked_sources)}"},
+            ],
+        ).choices[0].message.content.strip()
+        data = json.loads(msg[msg.find("{"):msg.rfind("}") + 1])
+        if missing_ids and data.get("status") == "pass":
+            data["status"] = "warn"
+            data.setdefault("issues", []).append(f"Missing source IDs: {missing_ids}")
+        return {**data, "citedIds": cited_ids, "missingCitationIds": missing_ids, "model": source_check_model()}
+    except Exception as e:
+        logger.exception("Source check failed")
+        return {"status": "warn", "summary": "Source check failed.", "issues": [str(e)], "citedIds": cited_ids, "missingCitationIds": missing_ids, "model": source_check_model()}
 
-    Vault retrieval always runs; web retrieval is attempted only when ``allow_web``
-    is true, and yields no results if ``BROWSERBASE_API_KEY`` is unset. If web
-    retrieval raises, vault-only results are still returned. If ``OPENROUTER_API_KEY``
-    is unset or the LLM call fails, a deterministic excerpt-based fallback is
-    returned instead.
+def answer(question: str, allow_web: bool = False, check_sources: bool = False) -> dict:
+    """Retrieve sources and synthesise an answer, falling back to excerpts on failure.
+
+    Vault retrieval always runs; web retrieval runs only when ``allow_web`` is
+    true and yields no results if ``BROWSERBASE_API_KEY`` is unset. If web
+    retrieval raises, vault-only results are still returned. If
+    ``OPENROUTER_API_KEY`` is unset or the LLM call fails, a deterministic
+    excerpt-based fallback is returned instead.
 
     Args:
-        question: The user's question. Not validated or cached.
-        allow_web: If true, also query Browserbase web search and include those
-            results in the LLM context.
+        question: The user's question.
+        allow_web: If true, also query Browserbase and include those results in
+            the LLM context.
+        check_sources: If true, run a second smaller model to verify the answer
+            against its cited sources.
 
     Returns:
-        A dict with keys:
-            answer (str): Final answer text (LLM output or fallback).
-            sources (list[dict]): Numbered, deduplicated sources used.
-            trace (list[dict]): Tool-call trace for UI display.
-            usedLLM (bool): True if the LLM produced ``answer``, False if fallback.
+        Dict with keys ``answer`` (str), ``sources`` (list[dict]), ``trace``
+        (list[dict]), and ``usedLLM`` (bool). Includes ``sourceCheck`` (dict)
+        when ``check_sources`` is true and the LLM call succeeded.
     """
     found = []
     web_error = ""
@@ -225,7 +268,10 @@ def answer(question: str, allow_web: bool = False) -> dict:
                 {"role": "user", "content": f"Question: {question}\n\nSources:\n{context(sources)}"},
             ],
         ).choices[0].message.content
-        return {"answer": msg, "sources": sources, "trace": trace, "usedLLM": True}
+        response = {"answer": msg, "sources": sources, "trace": trace, "usedLLM": True}
+        if check_sources:
+            response["sourceCheck"] = source_check(msg, sources)
+        return response
     except Exception as e:
         return {"answer": fallback(question, sources, str(e)), "sources": sources, "trace": trace, "usedLLM": False}
 
@@ -237,7 +283,7 @@ def api_query(body: dict) -> dict:
     question = str(body.get("question", "")).strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
-    return answer(question, allow_web=body.get("allowWeb") is True)
+    return answer(question, allow_web=body.get("allowWeb") is True, check_sources=body.get("checkSources") is True)
 
 @app.get("/api/sources")
 def api_sources() -> list[dict]:
@@ -246,7 +292,10 @@ def api_sources() -> list[dict]:
 
 @app.post("/api/reload")
 def api_reload() -> dict:
+    config.cache_clear()
     build_vault_index.cache_clear()
-    results.cache_clear()
+    _vault_results.cache_clear()
+    if WEB_CACHE is not None:
+        WEB_CACHE.clear()
     build_vault_index(vault_path())
     return {"ok": True}
