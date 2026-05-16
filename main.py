@@ -23,12 +23,11 @@ def model_name() -> str:
     model = os.getenv("OPENROUTER_MODEL") or config()["model"]
     return model if model.startswith("openrouter/") else f"openrouter/{model}"
 
-def source(title, text, *, path="", url="", kind="", score=0) -> dict:
+def source(title, text, *, path="", url="", score=0) -> dict:
     return {
         "title": title,
         "path": path,
         "url": url,
-        "kind": kind,
         "sourceType": "web" if url else "vault",
         "excerpts": [text[:320]],
         "text": text[:1200],
@@ -57,10 +56,9 @@ def results(kind: str, query: str) -> tuple[dict, ...]:
         if not r:
             return ()
         return tuple(source(
-            path := x.node.metadata.get("path", Path(x.node.node_id).as_posix()),
+            path := x.node.metadata["path"],
             x.node.get_content(metadata_mode="none").strip(),
             path=path,
-            kind="vault",
             score=x.score or 0,
         ) for x in r.retrieve(query))
 
@@ -80,7 +78,6 @@ def results(kind: str, query: str) -> tuple[dict, ...]:
         x.get("title") or x.get("name") or "(untitled)",
         x.get("snippet") or x.get("description") or "",
         url=x.get("url") or x.get("link") or "",
-        kind="web search",
     ) for x in r.json().get("results", []))
 
 def number_sources(sources: list[dict]) -> list[dict]:
@@ -116,7 +113,7 @@ def answer(question: str, allow_web: bool = False) -> dict:
     if allow_web:
         trace.append({"tool": "search_web", "input": question, "sources": [s["id"] for s in sources if s["sourceType"] == "web"]})
     if not os.getenv("OPENROUTER_API_KEY"):
-        return {"answer": fallback(question, sources), "sources": sources, "trace": trace, "usedLLM": False, "usedAgent": False}
+        return {"answer": fallback(question, sources), "sources": sources, "trace": trace, "usedLLM": False}
     try:
         msg = litellm.completion(
             model=model_name(),
@@ -126,9 +123,9 @@ def answer(question: str, allow_web: bool = False) -> dict:
                 {"role": "user", "content": f"Question: {question}\n\nSources:\n{context(sources)}"},
             ],
         ).choices[0].message.content
-        return {"answer": msg, "sources": sources, "trace": trace, "usedLLM": True, "usedAgent": False}
+        return {"answer": msg, "sources": sources, "trace": trace, "usedLLM": True}
     except Exception as e:
-        return {"answer": fallback(question, sources, str(e)), "sources": sources, "trace": trace, "usedLLM": False, "usedAgent": False}
+        return {"answer": fallback(question, sources, str(e)), "sources": sources, "trace": trace, "usedLLM": False}
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -138,7 +135,7 @@ def api_query(body: dict):
     question = str(body.get("question", "")).strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
-    return answer(question, allow_web=body.get("allowWeb", False) is True)
+    return answer(question, allow_web=bool(body.get("allowWeb")))
 
 @app.get("/api/sources")
 def api_sources():
