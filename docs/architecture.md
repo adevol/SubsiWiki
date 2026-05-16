@@ -1,126 +1,119 @@
 # Architecture
 
-SubsiWiki uses a deliberately small agent harness rather than a large orchestration framework. The goal is to make the agent easy to inspect, easy to constrain, and easy to replace later.
+SubsiWiki is a compact React + FastAPI RAG app for asking questions over an
+Obsidian-style Markdown vault. The backend is intentionally small: it retrieves
+vault evidence, optionally adds Browserbase web search snippets, and makes one
+LiteLLM/OpenRouter call to synthesize a cited answer.
 
 ## Runtime Shape
 
 ```mermaid
 flowchart TD
-  UI[React UI] --> API[Express API]
-  API --> Harness[Minimal Agent Harness]
-  Harness --> VaultTool[search_vault]
-  Harness --> FetchTool[fetch_url]
-  Harness --> SearchTool[search_web]
-  VaultTool --> Evidence[Vault Markdown + Live Web Evidence]
-  FetchTool --> Evidence
-  SearchTool --> Evidence
-  Evidence --> Answer[LLM Answer With Citations]
+  UI[React UI] --> API[FastAPI in main.py]
+  API --> Vault[BM25 vault retrieval]
+  API --> Web[Optional Browserbase Search]
+  Vault --> Sources[Numbered sources]
+  Web --> Sources
+  Sources --> LLM[LiteLLM / OpenRouter]
+  Sources --> Fallback[Retrieval fallback]
+  LLM --> Response[Answer + sources + trace]
+  Fallback --> Response
 ```
 
-The current harness lives in `server/index.js`. It follows the same simple pattern as the prototype CLI:
+The active backend lives in `main.py`. `npm run dev` starts this Python API
+alongside the Vite frontend.
 
-1. Start with a system prompt and user question.
-2. Call the model with a small tool registry.
-3. Execute requested tool calls.
-4. Append tool results to the conversation.
-5. Stop when the model returns a final answer or the step limit is reached.
+## Request Flow
 
-## Evidence Model
+`POST /api/query` accepts:
 
-Vault documents and live web pages are normalized into the same source shape before they reach the answer step:
+```json
+{
+  "question": "What funding could a small manufacturer qualify for?",
+  "allowWeb": false
+}
+```
+
+The backend then:
+
+1. Searches the local vault with BM25.
+2. Searches Browserbase only when `allowWeb` is exactly `true`.
+3. Deduplicates and numbers sources.
+4. Calls the configured OpenRouter model when `OPENROUTER_API_KEY` is set.
+5. Returns a deterministic excerpt fallback when the model is unavailable.
+
+## Vault Retrieval
+
+The vault path comes from `VAULT_DIR` and defaults to `SubsiWiki`. Markdown files
+are loaded recursively, chunked with LlamaIndex's `SentenceSplitter`, and indexed
+with `BM25Retriever`.
+
+The index is cached in process. `POST /api/reload` clears the retrieval caches
+and rebuilds the vault index.
+
+Vault loading is tolerant:
+
+- Missing vault directories return no vault results and emit a warning.
+- Empty vault directories return no vault results and emit a warning.
+- Individual Markdown files that fail to load are logged with their file path,
+  while the remaining files continue to index.
+
+## Source Model
+
+Vault and web search results are normalized into the same response shape:
 
 ```ts
 type Source = {
   id: number;
   title: string;
-  url?: string;
-  path?: string;
-  kind: string;
+  path: string;
+  url: string;
   sourceType: 'vault' | 'web';
   excerpts: string[];
+  text: string;
+  score: number;
 };
 ```
 
-This keeps the citation UI simple. The model cites `[1]`, `[2]`, and so on, regardless of whether the evidence came from Obsidian or the web.
+Vault sources use `path`; web sources use `url`. The frontend links bracket
+citations like `[1]` back to these numbered sources.
 
-## Tool Policy
+## Answering
 
-The model receives three narrow tools:
+When `OPENROUTER_API_KEY` is configured, `main.py` sends the question, numbered
+source context, and `system_prompt` from `config.yaml` to LiteLLM. The configured
+model comes from `OPENROUTER_MODEL` or `config.yaml`.
 
-- `search_vault(query)` searches local Markdown chunks and should run first.
-- `fetch_url(url, reason)` fetches one public URL and turns it into web evidence.
-- `search_web(query)` uses Browserbase Search when `BROWSERBASE_API_KEY` is configured.
+When the model key is missing or the model call fails, the API still returns a
+retrieval-only answer listing the top source excerpts.
 
-The system prompt tells the model to prefer the vault, use live web only when needed, prefer official sources, and avoid uncited claims.
+## Trace And Monitoring
 
-## Source Checking
+Every response includes a `trace` array that records which retrieval steps ran
+and which source IDs they produced. Web search failures are logged with the query
+and surfaced on the web trace item as `error`, while the answer falls back to any
+vault results.
 
-The `/api/query` endpoint accepts `checkSources: true`. When enabled and `OPENROUTER_API_KEY` is configured, the server runs a second verifier model call after the answer is generated. The verifier receives only the final answer, gathered source excerpts, and a deterministic list of missing citation IDs. It returns:
+Example trace with a web failure:
 
-```ts
-type SourceCheck = {
-  status: 'pass' | 'warn' | 'fail';
-  summary: string;
-  issues: string[];
-  citedIds: number[];
-  missingCitationIds: number[];
-  model: string;
-};
+```json
+[
+  { "tool": "search_vault", "input": "latest SME funding", "sources": [1, 2] },
+  {
+    "tool": "search_web",
+    "input": "latest SME funding",
+    "sources": [],
+    "error": "simulated browserbase outage"
+  }
+]
 ```
 
-This check is advisory. It does not rewrite or block the answer, but the UI surfaces the result so a user can quickly see whether citations look supported.
+## Current Scope
 
-## Guardrails
+The Python backend does not currently implement an agent loop, `fetch_url`, live
+page extraction, source checking, SSRF validation, or per-request web budgets.
+Browserbase is used only for `/v1/search`, and those results are snippets rather
+than fetched page contents.
 
-The harness has small hard limits:
-
-- `AGENT_MAX_STEPS` (default 8)
-- `AGENT_MAX_WEB_FETCHES` (default 15)
-- `AGENT_MAX_WEB_SEARCHES` (default 5)
-
-### SSRF Rules
-
-`fetch_url` validates every URL with `assertPublicHttpUrl` before any network call. The validator rejects:
-
-- Non-`http(s)` protocols.
-- `localhost` and any hostname ending in `.local`.
-- IPv4 addresses in private ranges (`10/8`, `127/8`, `169.254/16`, `172.16/12`, `192.168/16`, `0/8`).
-- IPv6 loopback (`::1`), unique-local (`fc..`, `fd..`), and link-local (`fe80..`) addresses.
-- Hostnames whose DNS lookup resolves to any of the above.
-
-User-supplied URLs are never trusted to be public — DNS resolution happens before the fetch so an attacker cannot route the server at internal services via a public hostname that resolves to private space.
-
-## Current Storage
-
-The prototype keeps indexed vault chunks in memory and does not persist fetched web pages. That is fine for a local MVP. For multi-user production, move toward:
-
-- Postgres for documents, runs, users, and source metadata.
-- Object storage for raw fetched HTML and artifacts.
-- A vector database or Postgres vector extension for chunk retrieval.
-- Redis or another queue for long web jobs.
-
-## Scaling Path
-
-The harness can stay small while the infrastructure grows around it:
-
-```mermaid
-flowchart TD
-  API[Express API Instances] --> Queue[Job Queue]
-  Queue --> Workers[Web Retrieval Workers]
-  Workers --> Store[Document Store + Vector Index]
-  Store --> API
-```
-
-Browserbase helps avoid operating a browser fleet yourself. If browser sessions, screenshots, downloads, or authenticated browsing become necessary, add them behind the existing `fetch_url` or a new `browser_task` tool rather than exposing broad browser control to the model immediately.
-
-## Why Not a Large Agent Framework Yet?
-
-The system needs evidence discipline more than agent cleverness. A small custom harness makes it clear:
-
-- Which tools exist.
-- Which source each claim came from.
-- How many web calls a run made.
-- Why a URL was fetched.
-- Where to add user, tenant, and cost limits later.
-
-Frameworks can be added later if they solve a concrete problem. For now, the compact loop is a feature.
+The legacy Node server remains in `server/index.js` for reference and can still
+be run with `npm run server:node`, but it is not the default runtime.
