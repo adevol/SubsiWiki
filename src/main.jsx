@@ -133,7 +133,7 @@ function App() {
             <div className="source-num">[{source.id}]</div>
             <div>
               <h3>{source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}</h3>
-              <p className="source-meta">{source.sourceType || source.kind} · {source.url || source.path}</p>
+              <p className="source-meta">{source.sourceType || source.kind} - {source.url || source.path}</p>
               {!!source.relatedUrls?.length && <p className="related-links">Official links: {source.relatedUrls.map((url, i) => <React.Fragment key={url}><a href={url} target="_blank" rel="noreferrer">{new URL(url).hostname}</a>{i < source.relatedUrls.length - 1 ? ', ' : ''}</React.Fragment>)}</p>}
               {source.excerpts?.[0] && <blockquote>{source.excerpts[0]}...</blockquote>}
             </div>
