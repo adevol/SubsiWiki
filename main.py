@@ -237,7 +237,7 @@ def api_query(body: dict) -> dict:
     question = str(body.get("question", "")).strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question is required.")
-    return answer(question, allow_web=body.get("allowWeb"))
+    return answer(question, allow_web=body.get("allowWeb") is True)
 
 @app.get("/api/sources")
 def api_sources() -> list[dict]:

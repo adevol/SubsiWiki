@@ -7,7 +7,6 @@ React + FastAPI app that lets users ask an Obsidian knowledge base questions and
 - Minimal Python request flow: retrieve sources, answer from context, return citations.
 - Vault-first BM25 retrieval from Markdown files in `SubsiWiki/`.
 - Optional live web search through Browserbase.
-- Legacy Node server remains available with `npm run server:node`.
 - Citation-first answer style: every factual claim should cite gathered evidence.
 - Fallback retrieval when the LLM call fails.
 - Research trace shown in the UI so users can see which tools ran.
@@ -44,7 +43,7 @@ uv run uvicorn main:app --host 0.0.0.0 --port 8787
 
 Set `BROWSERBASE_API_KEY` in `.env` to enable web search.
 Set `VAULT_DIR` to change the vault path; it defaults to `SubsiWiki`.
-`npm run dev` uses the Python API. The legacy Node server is still available with `npm run server:node`.
+`npm run dev` uses the Python API.
 
 ## How It Works
 
@@ -53,6 +52,7 @@ Set `VAULT_DIR` to change the vault path; it defaults to `SubsiWiki`.
 - Runs deterministic retrieval for `/api/query`.
 - Sends the gathered source context to the model in one call.
 - Normalizes vault and web search results into the same source format.
+- Logs failed vault file reads and Browserbase search errors.
 - Forces bracket citations like `[1]`.
 - Shows cited sources and the research trace in the frontend.
 

@@ -22,10 +22,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [usedLLM, setUsedLLM] = useState(null);
-  const [usedAgent, setUsedAgent] = useState(null);
   const [allowWeb, setAllowWeb] = useState(false);
-  const [checkSources, setCheckSources] = useState(false);
-  const [sourceCheck, setSourceCheck] = useState(null);
   const [trace, setTrace] = useState([]);
 
   const suggestions = useMemo(() => [
@@ -42,21 +39,18 @@ function App() {
     setError('');
     setAnswer('');
     setSources([]);
-    setSourceCheck(null);
     setTrace([]);
     try {
       const res = await fetch(`${API}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, agent: true, allowWeb, checkSources })
+        body: JSON.stringify({ question, allowWeb })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Request failed');
       setAnswer(json.answer);
       setSources(json.sources || []);
       setUsedLLM(json.usedLLM);
-      setUsedAgent(json.usedAgent);
-      setSourceCheck(json.sourceCheck || null);
       setTrace(json.trace || []);
     } catch (err) {
       setError(err.message);
@@ -72,7 +66,7 @@ function App() {
     <header className="hero">
       <div className="eyebrow">SubsiWiki AI</div>
       <h1>Ask the EU funding knowledge base.</h1>
-      <p>Get practical answers from your Obsidian vault with clickable citations, and let the agent inspect live pages when you approve it.</p>
+      <p>Get practical answers from your Obsidian vault with clickable citations, and add live web search snippets when you approve it.</p>
     </header>
 
     <main className="panel">
@@ -85,11 +79,7 @@ function App() {
             <input type="checkbox" checked={allowWeb} onChange={e => setAllowWeb(e.target.checked)} />
             <span>Allow live web</span>
           </label>
-          <label className="toggle">
-            <input type="checkbox" checked={checkSources} onChange={e => setCheckSources(e.target.checked)} />
-            <span>Check sources</span>
-          </label>
-          <span className="status">{usedLLM === false ? 'Retrieval-only: add OPENROUTER_API_KEY for generated answers' : usedAgent ? 'Agent answer from vault and approved tools' : usedLLM === true ? 'LLM answer generated from retrieved vault excerpts' : 'Cited answers from your vault'}</span>
+          <span className="status">{usedLLM === false ? 'Retrieval-only: add OPENROUTER_API_KEY for generated answers' : usedLLM === true ? 'LLM answer generated from retrieved sources' : 'Cited answers from your vault'}</span>
         </div>
       </form>
 
@@ -104,18 +94,6 @@ function App() {
         <div className="answer-text">{linkifyCitations(answer, sources)}</div>
       </section>}
 
-      {sourceCheck && <section className={`source-check-card source-check-${sourceCheck.status}`}>
-        <h2>Source check</h2>
-        <div className="source-check-summary">
-          <strong>{sourceCheck.status}</strong>
-          <span>{sourceCheck.summary}</span>
-        </div>
-        {!!sourceCheck.missingCitationIds?.length && <p>Missing citations: {sourceCheck.missingCitationIds.map(id => `[${id}]`).join(' ')}</p>}
-        {!!sourceCheck.issues?.length && <ul>
-          {sourceCheck.issues.map(issue => <li key={issue}>{issue}</li>)}
-        </ul>}
-      </section>}
-
       {!!trace.length && <section className="trace-card">
         <h2>Research trace</h2>
         <div className="trace-list">
@@ -123,6 +101,7 @@ function App() {
             <strong>{step.tool.replaceAll('_', ' ')}</strong>
             <span>{step.input}</span>
             {!!step.sources?.length && <em>{step.sources.map(id => `[${id}]`).join(' ')}</em>}
+            {step.error && <em>{step.error}</em>}
           </div>)}
         </div>
       </section>}
