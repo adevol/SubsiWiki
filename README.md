@@ -1,16 +1,25 @@
-# SubsiWiki AI Website
+# SubsiWiki AI — EU Funding Search for SMEs
 
-React + FastAPI app that lets users ask an Obsidian knowledge base questions and receive grounded answers with clickable citations. The Python backend searches the vault first, optionally adds Browserbase web search results, then makes one model call.
+SubsiWiki AI is a React + FastAPI application built to help **small and medium enterprises (SMEs) find and understand EU funding opportunities**. It lets users ask natural-language questions about grants, tenders, subsidies and programmes, and receive grounded answers with clickable citations drawn from a curated Obsidian knowledge base.
+
+The knowledge base is seeded with research clipped from official EU sources, stored in `SubsiWiki/Clippings`:
+
+- `EU Funding & Tenders Portal.md`
+- `Funding opportunities for small businesses.md`
+- `Funding opportunities.md`
+- `Funding programmes and open calls.md`
+- `Funding, grants, subsidies  European Union.md`
+- `Funding.md`
+- `The application process.md`
 
 ## Traits
 
-- Minimal Python request flow: retrieve sources, answer from context, return citations.
-- Vault-first BM25 retrieval from Markdown files in `SubsiWiki/`.
-- Optional live web search through Browserbase.
-- Citation-first answer style: every factual claim should cite gathered evidence.
-- Fallback retrieval when the LLM call fails.
-- Optional small-model source checking.
-- Research trace shown in the UI so users can see which tools ran.
+- **Vault-first retrieval** — BM25 search over Markdown files in `SubsiWiki/` (clippings and wiki notes).
+- **Optional live web search** — Browserbase can augment answers with current open calls and portal updates.
+- **Citation-first answers** — every factual claim cites gathered evidence so SMEs can verify and follow up.
+- **Fallback retrieval** when the LLM call fails.
+- **Optional small-model source checking**.
+- **Research trace** shown in the UI so users see which tools ran and what sources were used.
 
 ## Setup
 
@@ -48,7 +57,7 @@ Set `VAULT_DIR` to change the vault path; it defaults to `SubsiWiki`.
 
 ## How It Works
 
-- Reads Markdown from `SubsiWiki/`.
+- Reads Markdown from `SubsiWiki/` (including the `Clippings` folder with EU funding research).
 - Uses LlamaIndex to read and chunk vault Markdown.
 - Runs deterministic retrieval for `/api/query`.
 - Sends the gathered source context to the model in one call.

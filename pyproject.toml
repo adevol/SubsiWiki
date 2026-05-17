@@ -14,3 +14,9 @@ dependencies = [
   "pyyaml",
   "uvicorn>=0.47.0",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "types-pyyaml>=6.0.12.20260510",
+]
