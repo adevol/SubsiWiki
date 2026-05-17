@@ -1,16 +1,21 @@
-import json, logging, os, re
+import json
+import logging
+import os
+import re
 from functools import cache
 from pathlib import Path
 from typing import Literal
 
-import httpx, litellm, yaml
+import httpx
+import litellm
+import yaml  # type: ignore[import-untyped]
 from cachetools import TTLCache
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.retrievers.bm25 import BM25Retriever
+from llama_index.retrievers.bm25 import BM25Retriever  # type: ignore[import-untyped]
 
 load_dotenv()
 logger = logging.getLogger("subsiwiki")
@@ -19,7 +24,7 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 litellm.suppress_debug_info = True
 WEB_CACHE_TTL = int(os.getenv("WEB_CACHE_TTL_SECONDS", "3600"))
-WEB_CACHE = TTLCache(maxsize=1024, ttl=WEB_CACHE_TTL) if WEB_CACHE_TTL > 0 else None
+WEB_CACHE: TTLCache | None = TTLCache(maxsize=1024, ttl=WEB_CACHE_TTL) if WEB_CACHE_TTL > 0 else None
 
 @cache
 def config() -> dict:
@@ -161,7 +166,8 @@ def number_sources(sources: list[dict]) -> list[dict]:
     occurrence wins; later duplicates are dropped before numbering, so ids are
     always contiguous starting from 1.
     """
-    numbered, seen = [], set()
+    numbered: list[dict] = []
+    seen: set[str] = set()
     for s in sources:
         key = s["url"] or s["path"] or s["title"]
         if key in seen:
@@ -239,7 +245,7 @@ def answer(question: str, allow_web: bool = False, check_sources: bool = False) 
         (list[dict]), and ``usedLLM`` (bool). Includes ``sourceCheck`` (dict)
         when ``check_sources`` is true and the LLM call succeeded.
     """
-    found = []
+    found: list[dict] = []
     web_error = ""
     try:
         found.extend(results("vault", question))
